@@ -1,0 +1,92 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Product Number Scanner</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; }
+        #video { width: 100%; max-height: 300px; border: 1px solid #ccc; }
+        #output, #scannedList { width: 100%; padding: 10px; margin-top: 10px; font-family: monospace; }
+        button { margin-top: 10px; padding: 10px 20px; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <h1>Product Number Scanner</h1>
+    <p>Point your camera at a product number. The system will extract and format the number based on your business rules.</p>
+    <video id="video" autoplay></video>
+    <br>
+    <button onclick="captureAndProcess()">Scan Number</button>
+    <button onclick="undoLast()">Undo Last</button>
+    <button onclick="copyToClipboard()">Copy List</button>
+    <textarea id="scannedList" rows="6" readonly placeholder="Scanned numbers will appear here..."></textarea>
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+    <script>
+        const video = document.getElementById('video');
+        const scannedListEl = document.getElementById('scannedList');
+        let scannedNumbers = [];
+
+        // Start camera
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+            .then(stream => { video.srcObject = stream; })
+            .catch(err => alert("Camera access denied or not available."));
+
+        // Process scanned image
+        function captureAndProcess() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            Tesseract.recognize(canvas, 'eng', { logger: m => console.log(m) })
+                .then(({ data: { text } }) => {
+                    const processed = processNumber(text);
+                    if (processed) {
+                        scannedNumbers.push(processed);
+                        updateDisplay();
+                    } else {
+                        alert("Invalid number format detected.");
+                    }
+                });
+        }
+
+        // Process logic
+        function processNumber(rawNumber) {
+            rawNumber = rawNumber.replace(/\D/g, '');
+            if (rawNumber.length === 13) {
+                const prefix = rawNumber.slice(0, 3);
+                if (prefix === '200' || prefix === '290') {
+                    return rawNumber.slice(3, 12); // in-house: remove first 3 + last
+                } else {
+                    return rawNumber; // external: keep full
+                }
+            } else if (rawNumber.length === 8) {
+                return rawNumber.slice(3, 7); // in-house: remove first 3 + last
+            } else {
+                return null;
+            }
+        }
+
+        // Undo last scanned number
+        function undoLast() {
+            if (scannedNumbers.length > 0) {
+                scannedNumbers.pop();
+                updateDisplay();
+            }
+        }
+
+        // Update displayed list
+        function updateDisplay() {
+            scannedListEl.value = scannedNumbers.join(",");
+        }
+
+        // Copy to clipboard
+        function copyToClipboard() {
+            navigator.clipboard.writeText(scannedListEl.value)
+                .then(() => alert("Copied to clipboard!"))
+                .catch(() => alert("Copy failed."));
+        }
+    </script>
+</body>
+</html>
