@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,84 +5,213 @@
     <title>Product Number Scanner</title>
     <style>
         body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: auto; }
-        #video { width: 100%; max-height: 300px; border: 1px solid #ccc; }
-        #output, #scannedList { width: 100%; padding: 10px; margin-top: 10px; font-family: monospace; }
-        button { margin-top: 10px; padding: 10px 20px; font-size: 16px; }
+        #videoContainer { position: relative; width: 100%; aspect-ratio: 16 / 6; overflow: hidden; }
+        #video { height: 100%; width: 100%; object-fit: cover; border: 1px solid #ccc; display: block; margin: auto; }
+        #scanLine {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background-color: red;
+            z-index: 10;
+        }
+        .number { font-family: monospace; padding: 4px 6px; display: block; margin: 6px 0; border-radius: 4px; }
+        .inhouse { background-color: #e0f0ff; color: blue; }
+        .external { background-color: #ffe0e0; color: red; }
+        button { margin: 10px 5px 0 0; padding: 10px 20px; font-size: 16px; }
+
+        /* Modal styles */
+        #categoryModal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        #categoryModalContent {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            width: 300px;
+        }
+
+        #categoryModalContent label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+
+        #categoryModalContent select {
+            width: 100%;
+            padding: 5px;
+        }
+
+        #categoryModalContent button {
+            margin: 10px 5px 0 0;
+        }
     </style>
 </head>
 <body>
     <h1>Product Number Scanner</h1>
-    <p>Point your camera at a product number. The system will extract and format the number based on your business rules.</p>
-    <video id="video" autoplay></video>
+    <p>Align the number under the red line for best results.</p>
+    <button onclick="startCamera()">Start Camera</button>
+    <div id="videoContainer">
+        <div id="scanLine"></div>
+        <video id="video" autoplay muted playsinline></video>
+    </div>
     <br>
-    <button onclick="captureAndProcess()">Scan Number</button>
-    <button onclick="undoLast()">Undo Last</button>
-    <button onclick="copyToClipboard()">Copy List</button>
-    <textarea id="scannedList" rows="6" readonly placeholder="Scanned numbers will appear here..."></textarea>
+    <div>
+        <button onclick="captureAndProcess()">Scan Number</button>
+        <button onclick="undoLast()">Undo Last</button>
+        <button onclick="copyToClipboard()">Copy List</button>
+    </div>
+    <div id="scannedList"></div>
+
+    <!-- Modal -->
+    <div id="categoryModal">
+        <div id="categoryModalContent">
+            <h3>Categorize Scanned Number</h3>
+            <label>Category:</label>
+            <select id="categorySelect">
+                <option value="standard">standard</option>
+                <option value="action">action</option>
+                <option value="reduziert">reduziert</option>
+            </select>
+
+            <label>Packaging:</label>
+            <select id="packagingSelect">
+                <option value="einweg">einweg</option>
+                <option value="kein einweg">kein einweg</option>
+            </select>
+
+            <label>Size:</label>
+            <select id="sizeSelect">
+                <option value="groß">groß</option>
+                <option value="klein">klein</option>
+            </select>
+
+            <div style="margin-top:10px;">
+                <button onclick="confirmCategorization()">Confirm</button>
+                <button onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
     <script>
         const video = document.getElementById('video');
         const scannedListEl = document.getElementById('scannedList');
         let scannedNumbers = [];
+        let pendingScan = null;
 
-        // Start camera
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
             .then(stream => { video.srcObject = stream; })
             .catch(err => alert("Camera access denied or not available."));
 
-        // Process scanned image
+        
+        function startCamera() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                    .then(stream => { video.srcObject = stream; })
+                    .catch(err => alert("Camera access denied or not available."));
+            } else {
+                alert("Camera API not supported on this device.");
+            }
+        }
+
         function captureAndProcess() {
             const canvas = document.createElement('canvas');
+            const midHeight = video.videoHeight * 0.5;
+            const bandHeight = 60;
             canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.height = bandHeight;
             const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            Tesseract.recognize(canvas, 'eng', { logger: m => console.log(m) })
-                .then(({ data: { text } }) => {
-                    const processed = processNumber(text);
-                    if (processed) {
-                        scannedNumbers.push(processed);
-                        updateDisplay();
-                    } else {
-                        alert("Invalid number format detected.");
-                    }
-                });
-        }
+            ctx.drawImage(video, 0, midHeight - bandHeight / 2, video.videoWidth, bandHeight, 0, 0, canvas.width, canvas.height);
 
-        // Process logic
-        function processNumber(rawNumber) {
-            rawNumber = rawNumber.replace(/\D/g, '');
-            if (rawNumber.length === 13) {
-                const prefix = rawNumber.slice(0, 3);
-                if (prefix === '200' || prefix === '290') {
-                    return rawNumber.slice(3, 12); // in-house: remove first 3 + last
+            Tesseract.recognize(canvas, 'eng', {
+                tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:',
+                preserve_interword_spaces: 0
+            }).then(({ data: { text } }) => {
+                console.log("Raw OCR:", text);
+                const processed = processNumber(text);
+                if (processed) {
+                    categorizeNumber(processed);
                 } else {
-                    return rawNumber; // external: keep full
+                    alert("Invalid number format detected.");
                 }
-            } else if (rawNumber.length === 8) {
-                return rawNumber.slice(3, 7); // in-house: remove first 3 + last
-            } else {
-                return null;
-            }
+            });
         }
 
-        // Undo last scanned number
-        function undoLast() {
-            if (scannedNumbers.length > 0) {
-                scannedNumbers.pop();
-                updateDisplay();
+        function processNumber(rawText) {
+            const lines = rawText.split(/[\n\r]+/);
+            for (let line of lines) {
+                line = line.trim();
+                const match = line.match(/^(DE|AN):\s*(\d{8,13})/);
+                if (match) {
+                    const number = match[2];
+                    if (number.startsWith('200') || number.startsWith('290') || number.length === 8) {
+                        return { value: number.slice(3, number.length - 1), type: 'inhouse' };
+                    } else {
+                        return { value: number, type: 'external' };
+                    }
+                }
             }
+
+            let rawNumber = rawText.replace(/\D/g, '');
+            console.log("Cleaned:", rawNumber);
+            if (rawNumber.length >= 4) {
+                if ((rawNumber.startsWith('200') || rawNumber.startsWith('290')) || rawNumber.length === 8) {
+                    return { value: rawNumber.slice(3, rawNumber.length - 1), type: 'inhouse' };
+                } else {
+                    return { value: rawNumber, type: 'external' };
+                }
+            }
+            return null;
         }
 
-        // Update displayed list
+        function categorizeNumber(scanned) {
+            pendingScan = scanned;
+            document.getElementById('categoryModal').style.display = 'flex';
+        }
+
+        function confirmCategorization() {
+            pendingScan.category = document.getElementById('categorySelect').value;
+            pendingScan.packaging = document.getElementById('packagingSelect').value;
+            pendingScan.size = document.getElementById('sizeSelect').value;
+
+            scannedNumbers.push(pendingScan);
+            updateDisplay();
+            closeModal();
+            pendingScan = null;
+        }
+
+        function closeModal() {
+            document.getElementById('categoryModal').style.display = 'none';
+        }
+
         function updateDisplay() {
-            scannedListEl.value = scannedNumbers.join(",");
+            scannedListEl.innerHTML = scannedNumbers.map(n => `
+                <div class="number ${n.type}">
+                    <strong>${n.value}</strong><br>
+                    <small>${n.category}, ${n.packaging}, ${n.size}</small>
+                </div>
+            `).join('');
         }
 
-        // Copy to clipboard
+        function undoLast() {
+            scannedNumbers.pop();
+            updateDisplay();
+        }
+
         function copyToClipboard() {
-            navigator.clipboard.writeText(scannedListEl.value)
+            const text = scannedNumbers.map(n =>
+                `${n.value} (${n.category}, ${n.packaging}, ${n.size})`
+            ).join(", ");
+            navigator.clipboard.writeText(text)
                 .then(() => alert("Copied to clipboard!"))
                 .catch(() => alert("Copy failed."));
         }
